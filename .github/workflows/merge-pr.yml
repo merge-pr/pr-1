@@ -124,7 +124,7 @@ jobs:
         run: |
           make docker-build
           make docker-push
-      - name: Build and push "master-GIT_SHA" Docker image
+      - name: Build and push "master-GIT_SHA" Docker imagees 1
         env:
           DOCKER_TAG: master-${{ env.GIT_SHA_SHORT }}
         run: |

@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright...
+
+name: IOSMCN PR Validation-test1
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  staticcheck:
+    runs-on: ubuntu-latest0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: WillAbides/setup-go-faster@v1.14.0
+        with:
+          go-version-file: 'go.mod'
+      - uses: dominikh/staticcheck-action@v1.3.1
+        with:
+          version: latest
+          install-go: false
+      - name: Capture Staticcheck Output-1
+        run: |
+          mkdir -p reports         
+          staticcheck ./... > reports/staticcheck.txt || true
+          cat reports/staticcheck.txt
+      - name: Process Report
+        run: |
+          temp_report="reports/temp_report.txt"
+          if [ -s reports/staticcheck.txt ]; then
+            echo "Staticcheck found issues:" > $temp_report
+            cat reports/staticcheck.txt >> $temp_report
+          else
+            echo "Staticcheck has no issues." > $temp_report
+          fi
+          mv $temp_report reports/staticcheck.txt
+          cat reports/staticcheck.txt
+      - name: Upload Staticcheck Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: staticcheck-report
+          path: reports/staticcheck.txt
+          retention-days: 14
+
+  lint:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'raise-pr'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6.1.1
+        with:
+          version: latest
+          args: -v --config ./.golangci.yml --timeout=10m
+
+  hadolint:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'raise-pr'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dockerfile linter
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          ignore: DL3008,DL3018
+
+  license-check:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'raise-pr'
+    steps:
+      - uses: actions/checkout@v4
+      - name: reuse lint
+        uses: fsfe/reuse-action@v4
+
+  fossa-check:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'raise-pr'
+    steps:
+      - uses: actions/checkout@v4
+      - name: FOSSA scan
+        uses: fossa-contrib/fossa-action@v3
+        with:
+          fossa-api-key: ${{ secrets.FOSSA_API_KEY }}
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'raise-pr'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Unit tests
+        run: go test ./...
+
+  docker-build-push-images:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'raise-pr'
+    needs: unit-tests
+    
+    env:
+      REGISTRY: ghcr.io
+      DOCKER_REGISTRY: ghcr.io/
+      DOCKER_REPOSITORY: jeena-reji/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - run: echo GIT_SHA_SHORT=$(git rev-parse --short HEAD) >> $GITHUB_ENV
+      - uses: docker/login-action@v3.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.GHCRUSER }}
+          password: ${{ secrets.GHCRPASS }}
+      - name: Build and push "master-latest" Docker image
+        env:
+          DOCKER_TAG: master-latest
+        run: |
+          make docker-build
+          make docker-push
+      - name: Build and push "master-GIT_SHA" Docker image
+        env:
+          DOCKER_TAG: master-${{ env.GIT_SHA_SHORT }}
+        run: |
+          make docker-build
+          make docker-push
